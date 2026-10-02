@@ -53,10 +53,10 @@ produces no report at all, silently, and only on the unlucky seeds.
 TWO THINGS THIS AGENT DOES ON PURPOSE, AND WHY
 ==============================================
 
-1. `before_model` is applied to a COPY of the history, and only the raw
-   response and the raw observation are appended back. So a layer that
-   appends a one-turn nudge (`budget_policy`) nudges for one turn instead
-   of forever.
+1. `before_model` is applied to a COPY of the history and its message
+   dictionaries; message text is immutable and shared. Only the response
+   and observation are appended back. A one-turn nudge or message edit
+   therefore applies for one turn instead of forever.
 2. `tools.submit()` is called directly, NOT through `wrap_tool_call`.
    Submitting is the run's own bookkeeping rather than an action the
    agent chose, and a `retry` layer that re-submitted would spend budget
@@ -517,7 +517,7 @@ class ReActAgent:
         for step in range(self.max_steps):
             ctx.step = step
 
-            outbound = self.middleware.before_model(ctx, list(ctx.messages))
+            outbound = self.middleware.before_model(ctx, [dict(message) for message in ctx.messages])
             response = self.middleware.wrap_model_call(ctx, self._call_model)(outbound)
             response = self.middleware.after_model(ctx, response)
 

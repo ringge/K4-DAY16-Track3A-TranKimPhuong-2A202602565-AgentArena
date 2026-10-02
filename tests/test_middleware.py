@@ -248,6 +248,35 @@ def test_a_layer_that_appends_in_place_cannot_corrupt_the_history():
     )
 
 
+def test_in_place_message_edits_apply_only_to_the_current_model_turn():
+    class EditOnce(Middleware):
+        def before_model(self, ctx, messages):
+            if ctx.step == 0:
+                messages[1]["content"] = "Temporary query for this turn only"
+            return messages
+
+    class CaptureModel:
+        def __init__(self):
+            self.questions = []
+
+        def complete(self, messages):
+            self.questions.append(messages[1]["content"])
+            text = (
+                'ACTION: {"tool": "calc", "args": {"expression": "1+1"}}'
+                if len(self.questions) == 1
+                else 'FINAL: {"answer": "No evidence", "claims": [], "abstain": true}'
+            )
+            return ModelResponse(text=text, prompt_tokens=20, completion_tokens=20)
+
+    agent, _, _ = _agent(middleware=[EditOnce()], max_steps=2)
+    model = CaptureModel()
+    agent.model = model
+    report = agent.run(BRIEF_SLA)
+
+    assert model.questions == ["Temporary query for this turn only", BRIEF_SLA["question_vi"]]
+    assert report["abstain"] is True
+
+
 def test_a_nudge_without_the_sentinel_is_mistaken_for_the_brief_question():
     """Why `budget_policy`'s nudge MUST carry `FINALIZE_SENTINEL`.
 

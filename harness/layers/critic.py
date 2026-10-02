@@ -79,16 +79,40 @@ class Critic(Middleware):
     name = "critic"
 
     def after_agent(self, ctx, report):
-        # TODO (§2): khoảng 10-25 dòng.
-        #  1. Lấy report["claims"]; nếu rỗng hoặc không phải list thì thôi.
-        #  2. Với mỗi claim: nếu claim["text"] có trong ctx.observed_text
-        #     -> giữ nguyên (KHÔNG sửa chữ).
-        #  3. Nếu không: thử tách câu ghép (trường hợp (c) ở docstring).
-        #     Tách được -> giữ cả hai nửa, mỗi nửa gắn doc_id của tài liệu
-        #     thật sự chứa nó, và đặt report["abstain"] = True.
-        #  4. Không tách được -> đây là bịa: bỏ claim đi.
-        #  5. Nếu không còn claim nào: report["abstain"] = True,
-        #     claims = [], citations = [], và viết lại "answer" nói rõ là
-        #     không đủ căn cứ.
-        #  6. Cập nhật report["citations"] cho khớp với claims còn lại.
-        return report  # <- mặc định KHÔNG LÀM GÌ: agent vẫn chạy được
+        claims = report.get("claims")
+        if not isinstance(claims, list):
+            return report
+        observed = ctx.observed_text
+        docs = ctx.corpus.docs if ctx.corpus is not None else []
+        kept = []
+        for claim in claims:
+            if not isinstance(claim, dict):
+                continue
+            text = claim.get("text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            if text in observed:
+                kept.append(claim)
+                continue
+            # Try every conjunction: a source fragment may itself contain " và ".
+            start = text.find(" và ")
+            while start != -1:
+                left, right = text[:start], text[start + len(" và "):]
+                if left and right and left in observed and right in observed:
+                    left_docs = [doc for doc in docs if any(left in line for line in doc.body.splitlines())]
+                    right_docs = [doc for doc in docs if any(right in line for line in doc.body.splitlines())]
+                    sources = next(((a, b) for a in left_docs for b in right_docs if a.doc_id != b.doc_id), None)
+                    if sources is not None:
+                        kept.extend([
+                            {**claim, "text": left, "doc_id": sources[0].doc_id},
+                            {**claim, "text": right, "doc_id": sources[1].doc_id},
+                        ])
+                        report["abstain"] = True
+                        break
+                start = text.find(" và ", start + len(" và "))
+        report["claims"] = kept
+        report["citations"] = sorted({claim["doc_id"] for claim in kept if isinstance(claim.get("doc_id"), str) and claim["doc_id"]})
+        if not kept:
+            report["abstain"] = True
+            report["answer"] = "Không đủ căn cứ trong tài liệu đã đọc để trả lời."
+        return report
